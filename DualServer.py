@@ -3,14 +3,13 @@
 """
 DualServer — Unified Quotex + Binolla API Server (SINGLE FILE)
 ================================================================
-Connects to BOTH Quotex and Binolla simultaneously in one file.
-Each broker has its own separate assets, payouts, and prices.
+Connects to BOTH Quotex and Binolla simultaneously.
+Each broker has its OWN separate assets, payouts, and prices.
 
-Architecture:
-  - Quotex: connect_quotex + keepalive + auto_reconnect + payouts + candles + live
-  - Binolla: HTTP login → JWT → WS + keepalive + JWT refresh + watchdog + payouts + candles
-  - HTTP API (port 8766): /api/quotex/* and /api/binolla/* (SEPARATE, not merged)
-  - Interactive CLI: dual> prompt with qx/bn subcommands
+  - Quotex: connect_quotex + keepalive + auto_reconnect + watchdog
+  - Binolla: HTTP login → JWT → WS + keepalive + JWT refresh + watchdog
+  - HTTP API (port 8766): /api/quotex/* and /api/binolla/* (SEPARATE)
+  - Interactive CLI: dual> prompt
 
 Usage:
   python DualServer.py --qx-email X --qx-password Y --bn-email Z --bn-password W
@@ -5224,12 +5223,12 @@ except Exception:
 # ==============================================================================
 # SECTION 0: CONFIG & CONSTANTS
 # ==============================================================================
-BN_HOST = "binolla.com"
-BN_WS_HOST = "ws3.binolla.com"
-BN_ORIGIN_URL = f"https://{HOST}"
-BN_WSS_URL = f"wss://{BN_WS_HOST}/socket.io/?EIO=4&transport=websocket"
+HOST = "binolla.com"
+WS_HOST = "ws3.binolla.com"
+ORIGIN_URL = f"https://{HOST}"
+WSS_URL = f"wss://{WS_HOST}/socket.io/?EIO=4&transport=websocket"
 
-BN_USER_AGENT = (
+USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
@@ -5252,10 +5251,10 @@ retry_strategy = Retry(
     allowed_methods=["GET", "POST"],
 )
 
-BN_BN_CREDENTIALS_FILE = Path("credentials.json")
-BN_BN_DATA_DIR = Path("binolla_data")
-BN_DATA_DIR.mkdir(exist_ok=True)
-BN_BN_LOG_FILE = Path("binolla.log")
+CREDENTIALS_FILE = Path("credentials.json")
+DATA_DIR = Path("binolla_data")
+DATA_DIR.mkdir(exist_ok=True)
+LOG_FILE = Path("binolla.log")
 
 # إعدادات الجلب
 FETCH_CHUNK_SIZE = 200          # عدد الشموع لكل batch
@@ -5280,32 +5279,32 @@ def set_live_stream_active(active: bool) -> None:
     _LIVE_STREAM_ACTIVE = active
 
 
-def bn_bn_logmsg(msg: str) -> None:
+def logmsg(msg: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S")
     # إن كان البث اللحظي نشطاً، اطبع على سطر جديد أولاً لتفادي الكتابة فوق السعر
     if _LIVE_STREAM_ACTIVE:
         sys.stdout.write("\n")
     print(f"  \033[2m[{ts}]\033[0m {msg}")
     try:
-        with open(BN_LOG_FILE, "a", encoding="utf-8") as f:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
 
 
-def bn_bn_log_exception(context: str, exc: BaseException) -> None:
+def log_exception(context: str, exc: BaseException) -> None:
     ts = datetime.now().strftime("%H:%M:%S")
     tb_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     print(f"  \033[91m[{ts}] FATAL in {context}: {exc}\033[0m")
     try:
-        with open(BN_LOG_FILE, "a", encoding="utf-8") as f:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(f"[{ts}] FATAL in {context}: {exc}\n{tb_text}\n")
     except Exception:
         pass
 
 
 # إعداد سكّت WebSocket
-def _bn_bn_prepare_logging() -> None:
+def _prepare_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
@@ -5316,7 +5315,7 @@ def _bn_bn_prepare_logging() -> None:
     ws_logger.addHandler(logging.NullHandler())
 
 
-_bn_prepare_logging()
+_prepare_logging()
 logger = logging.getLogger("binolla")
 cacert = certifi.where()
 ssl_context = ssl.create_default_context(cafile=cacert)
@@ -5334,7 +5333,7 @@ class Colors:
 
 
 def _thread_excepthook(args):
-    bn_log_exception(f"thread '{args.thread.name}'", args.exc_value)
+    log_exception(f"thread '{args.thread.name}'", args.exc_value)
 threading.excepthook = _thread_excepthook
 
 
@@ -5342,7 +5341,7 @@ def _main_excepthook(exc_type, exc_value, exc_tb):
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_tb)
         return
-    bn_log_exception("main thread (top level)", exc_value)
+    log_exception("main thread (top level)", exc_value)
 sys.excepthook = _main_excepthook
 
 
@@ -5666,7 +5665,7 @@ class BinollaWebsocketClient:
                                f"# Format:  DIR | LEN | TIME | RAW (or hex for binary)\n"
                                f"# DIR: ← = received from server, → = sent to server\n"
                                f"# ===========================================================\n")
-            bn_logmsg(f"{Colors.CYAN}WS message log: {BinollaWebsocketClient._ws_log_path.absolute()}{Colors.RESET}")
+            logmsg(f"{Colors.CYAN}WS message log: {BinollaWebsocketClient._ws_log_path.absolute()}{Colors.RESET}")
         except Exception as e:
             logger.warning("Could not open WS log file: %s", e)
 
@@ -5731,7 +5730,7 @@ class BinollaWebsocketClient:
     # ---- on_open: يُرسل بعد فتح قناة WebSocket -----
     def on_open(self, wss):
         logger.info("WebSocket connected to %s", WSS_URL)
-        bn_logmsg(f"WebSocket channel opened to {WS_HOST}")
+        logmsg(f"WebSocket channel opened to {WS_HOST}")
         self.state.check_websocket_if_connect = 1
         self.state.status = WebsocketStatus.CONNECTING
         # في EIO=4 ننتظر رسالة 0{...} (Engine.IO OPEN) قبل إرسال 40
@@ -5814,7 +5813,7 @@ class BinollaWebsocketClient:
             logger.debug("Unhandled Engine.IO frame: %s", msg_str[:120])
         except Exception as e:
             logger.error("Unhandled error in on_message: %s", e)
-            bn_log_exception("on_message", e)
+            log_exception("on_message", e)
         self.state.ssl_Mutual_exclusion = False
 
     # ---- 0{...}: تحديث إعدادات heartbeat ----
@@ -5834,7 +5833,7 @@ class BinollaWebsocketClient:
         sid = data.get("sid", "")
         logger.info("Engine.IO OPEN: sid=%s pingInterval=%.1fs pingTimeout=%.1fs",
                     sid, self._ping_interval, self._ping_timeout)
-        bn_logmsg(f"Engine.IO session established (sid={sid[:8]}..., "
+        logmsg(f"Engine.IO session established (sid={sid[:8]}..., "
                f"ping={self._ping_interval:.0f}s)")
         # مهم في EIO=4: العميل يُرسل '40' (Socket.IO CONNECT) طلباً
         # للانضمام إلى namespace الافتراضي "/".
@@ -5861,7 +5860,7 @@ class BinollaWebsocketClient:
         elif event_name == "s_authorization":
             # تأكيد المصادقة من الخادم (بدون payload)
             logger.info("Authorization ACCEPTED by server.")
-            bn_logmsg(f"{Colors.GREEN}Authorization accepted.{Colors.RESET}")
+            logmsg(f"{Colors.GREEN}Authorization accepted.{Colors.RESET}")
             self.state.check_accepted_connection = True
             self.state.check_rejected_connection = False
             self.state.auth_status = AuthStatus.AUTHENTICATED
@@ -5871,7 +5870,7 @@ class BinollaWebsocketClient:
             self._send_post_auth_subscriptions()
         elif event_name == "authorization/reject":
             logger.warning("Authorization REJECTED by server.")
-            bn_logmsg(f"{Colors.RED}Authorization rejected.{Colors.RESET}")
+            logmsg(f"{Colors.RED}Authorization rejected.{Colors.RESET}")
             self.state.check_rejected_connection = True
             self.state.auth_status = AuthStatus.FAILED
             self.state.signal_auth_rejected()
@@ -6120,7 +6119,7 @@ class BinollaWebsocketClient:
     def _send_authorization(self) -> None:
         token = self.state.SSID or self.api.token
         if not token:
-            bn_logmsg(f"{Colors.RED}No JWT token available — cannot authorize.{Colors.RESET}")
+            logmsg(f"{Colors.RED}No JWT token available — cannot authorize.{Colors.RESET}")
             self.state.signal_auth_rejected()
             return
         payload = {
@@ -6133,7 +6132,7 @@ class BinollaWebsocketClient:
             self._log_outgoing(data)
             self.wss.send(data)
             logger.info("Authorization sent (token=%s...).", token[:24])
-            bn_logmsg("Sent authorization frame to Binolla server...")
+            logmsg("Sent authorization frame to Binolla server...")
             self.state.auth_status = AuthStatus.PENDING
         except Exception as e:
             logger.error("Failed to send authorization: %s", e)
@@ -6190,7 +6189,7 @@ class BinollaWebsocketClient:
     # ---- on_error / on_close ----
     def on_error(self, wss, error):
         logger.error("WebSocket error: %s", error)
-        bn_log_exception("websocket.on_error", error if isinstance(error, BaseException)
+        log_exception("websocket.on_error", error if isinstance(error, BaseException)
                       else RuntimeError(str(error)))
         self.state.websocket_error_reason = str(error)
         self.state.check_websocket_if_error = True
@@ -6200,7 +6199,7 @@ class BinollaWebsocketClient:
 
     def on_close(self, wss, close_status_code, close_msg):
         logger.info("WebSocket closed: code=%s msg=%s", close_status_code, close_msg)
-        bn_logmsg(f"WebSocket closed (code={close_status_code}).")
+        logmsg(f"WebSocket closed (code={close_status_code}).")
         self.state.check_websocket_if_connect = 0
         self.state.status = WebsocketStatus.DISCONNECTED
         self.state.check_accepted_connection = False
@@ -6969,10 +6968,10 @@ class Binolla:
 # ==============================================================================
 def load_credentials() -> Optional[Dict[str, str]]:
     """يقرأ التوكن/الإيميل/كلمة المرور من credentials.json. يُعيد None إذا لم توجد."""
-    if not BN_CREDENTIALS_FILE.exists():
+    if not CREDENTIALS_FILE.exists():
         return None
     try:
-        data = json.loads(BN_CREDENTIALS_FILE.read_text())
+        data = json.loads(CREDENTIALS_FILE.read_text())
         if data.get("token") or (data.get("email") and data.get("password")):
             return data
         return None
@@ -6985,9 +6984,9 @@ def save_credentials(token: str = "", email: str = "", password: str = "",
     """يحفظ التوكن والإيميل/كلمة المرور ونوع الحساب في credentials.json."""
     try:
         existing = {}
-        if BN_CREDENTIALS_FILE.exists():
+        if CREDENTIALS_FILE.exists():
             try:
-                existing = json.loads(BN_CREDENTIALS_FILE.read_text())
+                existing = json.loads(CREDENTIALS_FILE.read_text())
             except Exception:
                 pass
         if token:
@@ -7000,10 +6999,10 @@ def save_credentials(token: str = "", email: str = "", password: str = "",
         if proxy:
             existing["proxy"] = proxy
         existing["saved_at"] = int(time.time())
-        BN_CREDENTIALS_FILE.write_text(json.dumps(existing, indent=2))
+        CREDENTIALS_FILE.write_text(json.dumps(existing, indent=2))
         return True
     except Exception as e:
-        bn_logmsg(f"Failed to save credentials: {e}")
+        logmsg(f"Failed to save credentials: {e}")
         return False
 
 
@@ -7105,9 +7104,9 @@ class Login(Browser):
         login = Login(api)
         status, msg = await login(email, password)
     """
-    base_url = BN_HOST
-    https_base_url = BN_ORIGIN_URL
-    login_url = f"{BN_ORIGIN_URL}/login"
+    base_url = HOST
+    https_base_url = ORIGIN_URL
+    login_url = f"{ORIGIN_URL}/login"
 
     def __init__(self, api, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -7273,7 +7272,7 @@ class Login(Browser):
         # 1) جلب /login لاستخراج CSRF والكوكيز
         soup = self.get_login_page()
         csrf = self._extract_csrf(soup)
-        bn_logmsg(f"GET /login — CSRF token: {'found' if csrf else 'none'}")
+        logmsg(f"GET /login — CSRF token: {'found' if csrf else 'none'}")
 
         # 2) بناء حمولة النموذج (مطابقة لـ qx__1.py + حقول Binolla)
         form_data = {
@@ -7287,7 +7286,7 @@ class Login(Browser):
         # 3) جرّب POST كـ form-urlencoded على كل endpoint
         last_err = ""
         for ep in _LOGIN_ENDPOINTS:
-            bn_logmsg(f"Trying POST (form) {ep} ...")
+            logmsg(f"Trying POST (form) {ep} ...")
             ok, msg = await self._post_form(form_data, ep)
             if ok:
                 # نجاح
@@ -7309,7 +7308,7 @@ class Login(Browser):
                 "remember": True,
             }
             for ep in _LOGIN_ENDPOINTS:
-                bn_logmsg(f"Trying POST (JSON) {ep} ...")
+                logmsg(f"Trying POST (JSON) {ep} ...")
                 ok, msg = await self._post_json(json_payload, ep)
                 if ok:
                     self.cookies_str = self.get_cookies()
@@ -7407,12 +7406,12 @@ def pretty_asset(symbol: str, timeframe_min: int) -> str:
 def save_candles_to_json(candles: List[Dict], asset: str,
                           timeframe_min: int, days: int) -> Optional[Path]:
     if not candles:
-        bn_logmsg("No candles to save.")
+        logmsg("No candles to save.")
         return None
     try:
         rnd = random.randint(1000, 9999)
         filename = f"{asset}_{timeframe_min}m_{days}d_{rnd}.json"
-        filepath = BN_DATA_DIR / filename
+        filepath = DATA_DIR / filename
         payload = {
             "asset": asset,
             "timeframe_min": timeframe_min,
@@ -7424,7 +7423,7 @@ def save_candles_to_json(candles: List[Dict], asset: str,
         filepath.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
         return filepath
     except Exception as e:
-        bn_log_exception("save_candles_to_json", e)
+        log_exception("save_candles_to_json", e)
         return None
 
 
@@ -7496,22 +7495,22 @@ async def keepalive_loop(client: "Binolla", stop_event: asyncio.Event) -> None:
 async def connect_binolla(token: str, is_demo: bool = True,
                           max_attempts: int = 3, proxies: Optional[str] = None) -> Optional[Binolla]:
     for attempt in range(1, max_attempts + 1):
-        bn_logmsg(f"Connecting to Binolla (attempt {attempt}/{max_attempts})...")
+        logmsg(f"Connecting to Binolla (attempt {attempt}/{max_attempts})...")
         client = Binolla(token=token, is_demo=is_demo, proxies=proxies)
         try:
             ok, reason = await asyncio.wait_for(client.connect(), timeout=30)
             if ok:
-                bn_logmsg(f"{Colors.GREEN}Connected to Binolla (account={'demo' if is_demo else 'real'}).{Colors.RESET}")
+                logmsg(f"{Colors.GREEN}Connected to Binolla (account={'demo' if is_demo else 'real'}).{Colors.RESET}")
                 return client
-            bn_logmsg(f"{Colors.YELLOW}Attempt {attempt}/{max_attempts} failed: {reason}{Colors.RESET}")
+            logmsg(f"{Colors.YELLOW}Attempt {attempt}/{max_attempts} failed: {reason}{Colors.RESET}")
         except asyncio.TimeoutError:
-            bn_logmsg(f"{Colors.YELLOW}Attempt {attempt}/{max_attempts} timed out.{Colors.RESET}")
+            logmsg(f"{Colors.YELLOW}Attempt {attempt}/{max_attempts} timed out.{Colors.RESET}")
             try:
                 await client.close()
             except Exception:
                 pass
         except Exception as e:
-            bn_log_exception(f"connect_binolla#{attempt}", e)
+            log_exception(f"connect_binolla#{attempt}", e)
             try:
                 await client.close()
             except Exception:
@@ -7568,10 +7567,10 @@ async def jwt_refresh_loop(client: "Binolla", args: Dict[str, Any],
             continue
 
         # اقترب الانتهاء — حدّث التوكن
-        bn_logmsg(f"{Colors.YELLOW}JWT expires in {remaining:.0f}s — refreshing via HTTP login...{Colors.RESET}")
+        logmsg(f"{Colors.YELLOW}JWT expires in {remaining:.0f}s — refreshing via HTTP login...{Colors.RESET}")
         new_token = await _http_login(args)
         if not new_token:
-            bn_logmsg(f"{Colors.RED}JWT refresh failed — will retry in {check_interval:.0f}s.{Colors.RESET}")
+            logmsg(f"{Colors.RED}JWT refresh failed — will retry in {check_interval:.0f}s.{Colors.RESET}")
             continue
 
         # حدّث التوكن في كل مكان
@@ -7588,10 +7587,10 @@ async def jwt_refresh_loop(client: "Binolla", args: Dict[str, Any],
         )
         exp_new = decode_jwt_exp(new_token)
         if exp_new:
-            bn_logmsg(f"{Colors.GREEN}JWT refreshed. New expiry: "
+            logmsg(f"{Colors.GREEN}JWT refreshed. New expiry: "
                    f"{datetime.fromtimestamp(exp_new).strftime('%H:%M:%S')}{Colors.RESET}")
         else:
-            bn_logmsg(f"{Colors.GREEN}JWT refreshed.{Colors.RESET}")
+            logmsg(f"{Colors.GREEN}JWT refreshed.{Colors.RESET}")
 
 
 async def watchdog_reconnect_loop(client: "Binolla", args: Dict[str, Any],
@@ -7640,7 +7639,7 @@ async def watchdog_reconnect_loop(client: "Binolla", args: Dict[str, Any],
         idle = time.time() - client.api.last_message_at
 
         # الاتصال ميت أو معلّق — أعد الاتصال
-        bn_logmsg(f"{Colors.YELLOW}Watchdog: connection dead (connected={connected}, "
+        logmsg(f"{Colors.YELLOW}Watchdog: connection dead (connected={connected}, "
                f"idle={idle:.0f}s, status={ws_status.name}). Reconnecting...{Colors.RESET}")
 
         # أغلق العميل القديم
@@ -7653,10 +7652,10 @@ async def watchdog_reconnect_loop(client: "Binolla", args: Dict[str, Any],
         # احصل على أحدث توكن (جدّده إن انتهى)
         current_token = client.api.token or client.token or ""
         if not current_token or is_token_expired(current_token):
-            bn_logmsg(f"{Colors.CYAN}Watchdog: refreshing JWT before reconnect...{Colors.RESET}")
+            logmsg(f"{Colors.CYAN}Watchdog: refreshing JWT before reconnect...{Colors.RESET}")
             new_token = await _http_login(args)
             if not new_token:
-                bn_logmsg(f"{Colors.RED}Watchdog: refresh failed. Will retry in {check_interval:.0f}s.{Colors.RESET}")
+                logmsg(f"{Colors.RED}Watchdog: refresh failed. Will retry in {check_interval:.0f}s.{Colors.RESET}")
                 continue
             current_token = new_token
             client.api.token = new_token
@@ -7666,64 +7665,64 @@ async def watchdog_reconnect_loop(client: "Binolla", args: Dict[str, Any],
         # أعد بناء الاتصال (حتى 5 محاولات)
         reconnected = False
         for attempt in range(1, max_reconnect_attempts + 1):
-            bn_logmsg(f"{Colors.CYAN}Watchdog: reconnect attempt {attempt}/{max_reconnect_attempts}...{Colors.RESET}")
+            logmsg(f"{Colors.CYAN}Watchdog: reconnect attempt {attempt}/{max_reconnect_attempts}...{Colors.RESET}")
             try:
                 ok, reason = await asyncio.wait_for(client.connect(), timeout=30)
                 if ok:
-                    bn_logmsg(f"{Colors.GREEN}Watchdog: reconnected successfully (attempt {attempt}).{Colors.RESET}")
+                    logmsg(f"{Colors.GREEN}Watchdog: reconnected successfully (attempt {attempt}).{Colors.RESET}")
                     # أعد الاشتراكات بعد نجاح إعادة الاتصال
                     try:
                         client.api.restore_subscriptions()
-                        bn_logmsg(f"{Colors.GREEN}Subscriptions restored after reconnect.{Colors.RESET}")
+                        logmsg(f"{Colors.GREEN}Subscriptions restored after reconnect.{Colors.RESET}")
                     except Exception as e:
                         logger.error("Error restoring subscriptions: %s", e)
                     reconnected = True
                     break
                 else:
-                    bn_logmsg(f"{Colors.RED}Watchdog: reconnect failed: {reason}{Colors.RESET}")
+                    logmsg(f"{Colors.RED}Watchdog: reconnect failed: {reason}{Colors.RESET}")
             except asyncio.TimeoutError:
-                bn_logmsg(f"{Colors.RED}Watchdog: reconnect timed out (attempt {attempt}).{Colors.RESET}")
+                logmsg(f"{Colors.RED}Watchdog: reconnect timed out (attempt {attempt}).{Colors.RESET}")
             except Exception as e:
-                bn_logmsg(f"{Colors.RED}Watchdog: reconnect error (attempt {attempt}): {e}{Colors.RESET}")
+                logmsg(f"{Colors.RED}Watchdog: reconnect error (attempt {attempt}): {e}{Colors.RESET}")
             # فاصل متزايد: 1s, 2s, 4s, 8s, 16s
             if attempt < max_reconnect_attempts:
                 delay = 2 ** (attempt - 1)
-                bn_logmsg(f"Retrying in {delay}s...")
+                logmsg(f"Retrying in {delay}s...")
                 await asyncio.sleep(delay)
         if not reconnected:
-            bn_logmsg(f"{Colors.RED}Watchdog: all {max_reconnect_attempts} reconnect attempts failed.{Colors.RESET}")
-            bn_logmsg(f"Will retry in {check_interval:.0f}s...")
+            logmsg(f"{Colors.RED}Watchdog: all {max_reconnect_attempts} reconnect attempts failed.{Colors.RESET}")
+            logmsg(f"Will retry in {check_interval:.0f}s...")
 
 
 async def fetch_candles_for_asset(client: Binolla, asset: str, days: int,
                                     timeframe_min: int, idx: int = 1,
                                     total: int = 1) -> List[Dict]:
     display = pretty_asset(asset, timeframe_min)
-    bn_logmsg(f"[{idx}/{total}] Fetching candles for {display} ({days} days, M{timeframe_min})...")
+    logmsg(f"[{idx}/{total}] Fetching candles for {display} ({days} days, M{timeframe_min})...")
 
     MAX_RETRIES = MAX_FETCH_RETRIES
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             if not client.api or not client.api.state.check_accepted_connection:
-                bn_logmsg(f"Connection dead before attempt {attempt}; aborting.")
+                logmsg(f"Connection dead before attempt {attempt}; aborting.")
                 return []
             candles = await asyncio.wait_for(
                 client.fetch_candles(asset, days, timeframe_min, timeout=30),
                 timeout=45,
             )
             if candles:
-                bn_logmsg(f"{Colors.GREEN}Got {len(candles)} candles.{Colors.RESET}")
+                logmsg(f"{Colors.GREEN}Got {len(candles)} candles.{Colors.RESET}")
                 return candles
-            bn_logmsg(f"Attempt {attempt}/{MAX_RETRIES}: empty response.")
+            logmsg(f"Attempt {attempt}/{MAX_RETRIES}: empty response.")
         except asyncio.TimeoutError:
-            bn_logmsg(f"Attempt {attempt}/{MAX_RETRIES}: fetch timed out.")
+            logmsg(f"Attempt {attempt}/{MAX_RETRIES}: fetch timed out.")
         except Exception as e:
-            bn_logmsg(f"Attempt {attempt}/{MAX_RETRIES} raised: {e}")
+            logmsg(f"Attempt {attempt}/{MAX_RETRIES} raised: {e}")
         if attempt < MAX_RETRIES:
             delay = min(RETRY_BACKOFF_BASE ** attempt, RETRY_BACKOFF_MAX)
-            bn_logmsg(f"Retry in {delay:.1f}s...")
+            logmsg(f"Retry in {delay:.1f}s...")
             await asyncio.sleep(delay)
-    bn_logmsg(f"All {MAX_RETRIES} attempts failed for {display}")
+    logmsg(f"All {MAX_RETRIES} attempts failed for {display}")
     return []
 
 
@@ -7894,14 +7893,14 @@ async def auto_login(args: Dict[str, Any]) -> Optional[str]:
 
     # 1) توكن من CLI — إن وُجد ولم ينتهِ
     if token and not is_token_expired(token):
-        bn_logmsg(f"{Colors.GREEN}Using CLI-provided JWT (still valid).{Colors.RESET}")
+        logmsg(f"{Colors.GREEN}Using CLI-provided JWT (still valid).{Colors.RESET}")
         return token
 
     # 2) حمّل credentials.json
     creds = load_credentials()
     if creds:
         if creds.get("token") and not is_token_expired(creds["token"]):
-            bn_logmsg(f"{Colors.GREEN}Using saved JWT from credentials.json (still valid).{Colors.RESET}")
+            logmsg(f"{Colors.GREEN}Using saved JWT from credentials.json (still valid).{Colors.RESET}")
             # املأ email/password من الاعتمادات المحفوظة لاستخدامها لاحقاً عند انتهاء الصلاحية
             if not email and creds.get("email"):
                 args["email"] = creds["email"]
@@ -7911,23 +7910,23 @@ async def auto_login(args: Dict[str, Any]) -> Optional[str]:
 
         # الـ JWT منتهٍ — جرّب إعادة الدخول عبر email/password
         if creds.get("email") and creds.get("password"):
-            bn_logmsg(f"{Colors.YELLOW}Saved JWT expired — re-logging in via HTTP...{Colors.RESET}")
+            logmsg(f"{Colors.YELLOW}Saved JWT expired — re-logging in via HTTP...{Colors.RESET}")
             args["email"] = creds["email"]
             args["password"] = creds["password"]
             return await _http_login(args)
 
     # 3) إن وُجد email/password من CLI/env — سجّل الدخول
     if email and password:
-        bn_logmsg(f"Logging in as {email} via HTTP (qx__1.py-style)...")
+        logmsg(f"Logging in as {email} via HTTP (qx__1.py-style)...")
         return await _http_login(args)
 
     # 4) لا اعتمادات على الإطلاق — اطلب email/password من المستخدم (مرة واحدة)
-    bn_logmsg(f"{Colors.CYAN}No credentials found. First-time setup:{Colors.RESET}")
+    logmsg(f"{Colors.CYAN}No credentials found. First-time setup:{Colors.RESET}")
     print(f"{Colors.DIM}  Enter your Binolla account email and password.{Colors.RESET}")
-    print(f"{Colors.DIM}  They will be saved to {BN_CREDENTIALS_FILE.name} so you won't be asked again.{Colors.RESET}")
+    print(f"{Colors.DIM}  They will be saved to {CREDENTIALS_FILE.name} so you won't be asked again.{Colors.RESET}")
     email_in, password_in = await prompt_email_password()
     if not email_in or not password_in:
-        bn_logmsg(f"{Colors.RED}Email and password are required. Exiting.{Colors.RESET}")
+        logmsg(f"{Colors.RED}Email and password are required. Exiting.{Colors.RESET}")
         return None
 
     # احفظهم فوراً في credentials.json (قبل محاولة الدخول لتفادي فقدانهم)
@@ -7940,8 +7939,8 @@ async def auto_login(args: Dict[str, Any]) -> Optional[str]:
         is_demo=args.get("is_demo", True),
         proxy=args.get("proxies", ""),
     )
-    print(f"{Colors.GREEN}Credentials saved to {BN_CREDENTIALS_FILE.name}{Colors.RESET}")
-    bn_logmsg(f"Logging in as {email_in} via HTTP (qx__1.py-style)...")
+    print(f"{Colors.GREEN}Credentials saved to {CREDENTIALS_FILE.name}{Colors.RESET}")
+    logmsg(f"Logging in as {email_in} via HTTP (qx__1.py-style)...")
     return await _http_login(args)
 
 
@@ -7967,15 +7966,15 @@ async def _http_login(args: Dict[str, Any]) -> Optional[str]:
     try:
         ok, jwt_or_err = await login(email, password)
     except Exception as e:
-        bn_logmsg(f"{Colors.RED}HTTP login exception: {e}{Colors.RESET}")
+        logmsg(f"{Colors.RED}HTTP login exception: {e}{Colors.RESET}")
         return None
     if not ok:
-        bn_logmsg(f"{Colors.RED}HTTP login failed: {jwt_or_err}{Colors.RESET}")
-        bn_logmsg(f"{Colors.YELLOW}Hint: Binolla uses Cloudflare Turnstile on /login. "
+        logmsg(f"{Colors.RED}HTTP login failed: {jwt_or_err}{Colors.RESET}")
+        logmsg(f"{Colors.YELLOW}Hint: Binolla uses Cloudflare Turnstile on /login. "
                f"Try logging in via browser once and copy the JWT from DevTools → "
                f"Application → Local Storage → 'token' key.{Colors.RESET}")
         return None
-    bn_logmsg(f"{Colors.GREEN}Got JWT from HTTP login.{Colors.RESET}")
+    logmsg(f"{Colors.GREEN}Got JWT from HTTP login.{Colors.RESET}")
     return jwt_or_err
 
 
@@ -8149,941 +8148,16 @@ def save_assets_info_to_json(payload: Dict[str, Any],
     """يحفظ بيانات الأصول (الاسم، نسبة الدفع، السعر اللحظي) في ملف JSON."""
     if out_path is None:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = BN_DATA_DIR / f"assets_info_{ts}.json"
+        out_path = DATA_DIR / f"assets_info_{ts}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False,
                                     default=str))
     return out_path
 
 
-async def fetch_all_assets_info(client: "Binolla",
-                                 wait_seconds: float = 8.0) -> Dict[str, Any]:
-    """يجلب كل الأصول المتوفرة + نسبة الدفع + السعر اللحظي.
-
-    الخطوات:
-      1) يطلب assets/list وينتظر s_assets/list.
-      2) يشترك في sentiment العام (s_asset/sentiment/subscribe).
-      3) لكل أصل، يُرسل asset/sentiment/subscribe وasset/list/change وquotes/list
-         لجلب نسبة الدفع والسعر اللحظي.
-      4) ينتظر wait_seconds لتجميع كل التحديثات.
-      5) يجمع النتائج في قائمة dicts.
-
-    النتيجة:
-        {
-          "fetched_at": <unix_ts>,
-          "assets_count": N,
-          "assets": [
-            {"asset":"EURUSD_otc", "payout":17, "price":1.0823, "signals":{...}, "raw":{...}},
-            ...
-          ]
-        }
-    """
-    api = client.api
-    if not api:
-        return {"error": "API not connected", "assets": []}
-
-    # 1) اطلب قائمة الأصول (وإن لم تصل بعد)
-    bn_logmsg(f"{Colors.CYAN}Requesting assets/list...{Colors.RESET}")
-    await api.event_registry.clear_event("s_assets/list")
-    api.fetch_assets()
-    assets_payload = await api.event_registry.wait_event(
-        "s_assets/list", timeout=10.0)
-    if not assets_payload:
-        # ربما وصلت تلقائياً بعد المصادقة
-        assets_payload = api.assets_list
-    if not assets_payload:
-        bn_logmsg(f"{Colors.RED}No assets/list received.{Colors.RESET}")
-        return {"error": "no assets/list", "assets": []}
-
-    api.assets_list = assets_payload
-    asset_names = _extract_asset_names(assets_payload)
-    bn_logmsg(f"{Colors.GREEN}Got {len(asset_names)} assets.{Colors.RESET}")
-    logger.debug("First 10 assets: %s", asset_names[:10])
-
-    # 2) اشترك في sentiment العام (يصل لكل الأصول تدريجياً)
-    bn_logmsg(f"{Colors.CYAN}Subscribing to global sentiment (s_asset/sentiment)...{Colors.RESET}")
-    api.subscribe_global_sentiment()
-
-    # 3) لكل أصل، اشترك في sentiment + quotes + signals
-    #    نرسل بشكل دفعي لكن بفاصل قصير لتفادي الـ rate-limiting.
-    bn_logmsg(f"{Colors.CYAN}Subscribing per-asset sentiment + quotes + signals "
-           f"({len(asset_names)} assets)...{Colors.RESET}")
-    BATCH = 25
-    for i in range(0, len(asset_names), BATCH):
-        batch = asset_names[i:i + BATCH]
-        for name in batch:
-            try:
-                api.subscribe_asset_sentiment(name)
-            except Exception as e:
-                logger.debug("subscribe_asset_sentiment(%s) err: %s", name, e)
-            try:
-                # نشترك في signals لفريمات شائعة
-                api.subscribe_asset_signals(name, timeframes=[60, 300, 900])
-            except Exception as e:
-                logger.debug("subscribe_asset_signals(%s) err: %s", name, e)
-        # طلب quotes/list لتحديث الأسعار اللحظية لكل الأصول
-        try:
-            api.subscribe_quotes()
-        except Exception as e:
-            logger.debug("subscribe_quotes err: %s", e)
-        # فاصل قصير بين الدفعات
-        await asyncio.sleep(0.3)
-
-    # 4) انتظر تجميع التحديثات
-    bn_logmsg(f"{Colors.CYAN}Waiting {wait_seconds:.1f}s to collect sentiment + quotes...{Colors.RESET}")
-    await asyncio.sleep(wait_seconds)
-
-    # 5) اجمع النتائج
-    assets_info: List[Dict[str, Any]] = []
-    for name in asset_names:
-        sentiment_data = api.assets_sentiment.get(name, {})
-        payout = None
-        if isinstance(sentiment_data, dict):
-            payout = sentiment_data.get("sentiment",
-                                         sentiment_data.get("payout",
-                                         sentiment_data.get("profit")))
-        quote_data = api.assets_quotes.get(name)
-        price = None
-        if isinstance(quote_data, dict):
-            for k in ("price", "value", "rate", "last"):
-                if k in quote_data:
-                    price = quote_data[k]
-                    break
-        elif isinstance(quote_data, (int, float)):
-            price = float(quote_data)
-        signals = api.assets_signals.get(name, {})
-        assets_info.append({
-            "asset": name,
-            "payout": payout,
-            "price": price,
-            "signals": {str(k): v for k, v in signals.items()},
-            "sentiment_raw": sentiment_data,
-            "quote_raw": quote_data,
-        })
-
-    return {
-        "fetched_at": int(time.time()),
-        "assets_count": len(assets_info),
-        "assets": assets_info,
-    }
-
 
 # ==============================================================================
-# SECTION 14: COMMAND-LINE INTERFACE
-# ==============================================================================
-def parse_args() -> Dict[str, Any]:
-    """معالجة بسيطة لوسائط سطر الأوامر.
-
-    الافتراضي: DEMO account (بدون أي أسئلة تفاعلية).
-    استخدم --real للتبديل إلى حساب حقيقي.
-    """
-    args = {
-        "token": os.environ.get("BINOLLA_TOKEN", ""),
-        "email": os.environ.get("BINOLLA_EMAIL", ""),
-        "password": os.environ.get("BINOLLA_PASSWORD", ""),
-        "asset": os.environ.get("BINOLLA_ASSET", ""),
-        "days": int(os.environ.get("BINOLLA_DAYS", "0")),
-        "timeframe": int(os.environ.get("BINOLLA_TIMEFRAME", "1")),
-        # الافتراضي: DEMO (السلوك المطلوب من المستخدم)
-        "is_demo": os.environ.get("BINOLLA_ACCOUNT", "demo").lower() != "real",
-        "proxies": os.environ.get("BINOLLA_PROXY", ""),
-        "headless": os.environ.get("BINOLLA_HEADLESS", "0") == "1",
-        "non_interactive": True,   # دائماً non-interactive الآن
-    }
-    # وسيطات سطر الأوامر البسيطة
-    rest = sys.argv[1:]
-    i = 0
-    while i < len(rest):
-        a = rest[i]
-        if a in ("--token",) and i + 1 < len(rest):
-            args["token"] = rest[i + 1]; i += 2; continue
-        if a in ("--email",) and i + 1 < len(rest):
-            args["email"] = rest[i + 1]; i += 2; continue
-        if a in ("--password", "--pass") and i + 1 < len(rest):
-            args["password"] = rest[i + 1]; i += 2; continue
-        if a in ("--asset",) and i + 1 < len(rest):
-            args["asset"] = rest[i + 1]; i += 2; continue
-        if a in ("--days",) and i + 1 < len(rest):
-            args["days"] = int(rest[i + 1]); i += 2; continue
-        if a in ("--period", "--timeframe") and i + 1 < len(rest):
-            args["timeframe"] = int(rest[i + 1]); i += 2; continue
-        if a in ("--real",):
-            args["is_demo"] = False; i += 1; continue
-        if a in ("--demo",):
-            args["is_demo"] = True; i += 1; continue
-        if a in ("--proxy",) and i + 1 < len(rest):
-            args["proxies"] = rest[i + 1]; i += 2; continue
-        if a in ("--headless",):
-            args["headless"] = True; i += 1; continue
-        if a in ("--non-interactive", "--yes", "-y"):
-            args["non_interactive"] = True; i += 1; continue
-        if a in ("-h", "--help"):
-            print(__doc__)
-            sys.exit(0)
-        i += 1
-    return args
-
-
-# ==============================================================================
-# SECTION 14.5: LIVE PRICE STREAM (event-driven, continuous)
-# ==============================================================================
-def _is_likely_timestamp(value: float) -> bool:
-    """يتحقق هل القيمة تبدو Unix timestamp (وليست سعراً).
-
-    أسعار الفوركس/الأسهم عادةً < 100000 (حتى BTC ~$100k).
-    Unix timestamps منذ 2001-09-09 = 1,000,000,000 (1e9).
-    منذ 2001 = 1e9، منذ 2020 = 1.5e9، منذ 2026 = 1.79e9.
-
-    أي قيمة >= 1e9 تُعتبر timestamp وليست سعراً.
-    """
-    if not isinstance(value, (int, float)):
-        return False
-    return abs(value) >= 1_000_000_000   # 1e9 = Sept 2001
-
-
-class LivePriceStream:
-    """يبث الأسعار اللحظية بشكل مستمر — يُطبع كل تحديث سعر فور وصوله.
-
-    آلية العمل:
-    - يُسجّل نفسه كمعالج (handler) لحدث `s_quotes/list` في BinollaAPI.
-    - كلما وصل تحديث أسعار من WebSocket، يُستدعى `handler()` فوراً.
-    - يطبّق throttling بسيط: max طبعة واحدة لكل أصل كل 0.3 ثانية (لتفادي الفيض).
-    - يدعم "watch mode": تخصيص أصل واحد لمتابعته حصرياً.
-
-    الاستخدام:
-        stream = LivePriceStream(api)
-        api.register_handler("s_quotes/list", stream.handler)
-        stream.start()
-    """
-
-    def __init__(self, api: "BinollaAPI", watch_asset: Optional[str] = None,
-                 min_interval: float = 0.3):
-        self.api = api
-        self.watch_asset = watch_asset    # None = كل الأصول
-        self.min_interval = min_interval  # ثانية بين طبعتين لنفس الأصل
-        self._last_print: Dict[str, float] = {}
-        self._enabled = True
-        self._print_count = 0
-        self.debug = False   # وضع debug: يطبع اسم كل حدث يصل
-
-    def start(self) -> None:
-        """يسجّل المعالج على s_quotes/list وs_asset/sentiment وs_history/last."""
-        if self.api:
-            self.api.register_handler("s_quotes/list", self._on_quotes)
-            self.api.register_handler("s_asset/sentiment", self._on_sentiment)
-            self.api.register_handler("s_history/last", self._on_history_last)
-
-    def stop(self) -> None:
-        """يوقف البث (المعالج يبقى مُسجّلاً لكنه لا يطبع)."""
-        self._enabled = False
-        # أعطّل flag لكي logmsg يطبع بشكل طبيعي
-        set_live_stream_active(False)
-        # اطبع سطراً جديداً ليفصل البث عن الرسائل التالية
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-
-    def resume(self) -> None:
-        """يستأنف البث."""
-        self._enabled = True
-        set_live_stream_active(True)
-
-    def set_watch(self, asset: Optional[str]) -> None:
-        """None = بث كل الأصول، أو اسم أصل لمتابعته حصرياً.
-
-        يُخزّن أيضاً في api.watch_asset ليُستعاد بعد إعادة اتصال WebSocket.
-        """
-        self.watch_asset = asset.strip().upper() if asset else None
-        self._last_print.clear()
-        # خزّن في API للاستعادة بعد reconnect
-        if self.api:
-            self.api.watch_asset = self.watch_asset
-            # حدّث current_asset أيضاً (يُستخدم في fallback لاسم الأصل)
-            if self.watch_asset:
-                self.api.current_asset = self.watch_asset
-
-    def set_debug(self, enabled: bool) -> None:
-        """يُفعّل/يُعطّل وضع debug (يطبع اسم كل حدث يصل)."""
-        self.debug = enabled
-
-    def _on_quotes(self, *args) -> None:
-        """يُستدعى عند وصول s_quotes/list. يطبع الأسعار فوراً."""
-        if not self._enabled and not self.debug:
-            return
-        if not args:
-            return
-        payload = args[0]
-        if self.debug:
-            ts = datetime.now().strftime("%H:%M:%S")
-            preview = str(payload)[:200]
-            print(f"  {Colors.DIM}[{ts}] DEBUG s_quotes/list: {preview}{Colors.RESET}")
-        if not self._enabled:
-            return
-        # قد تكون القائمة من dicts أو tuples أو قيمة بسيطة
-        items = payload if isinstance(payload, list) else [payload]
-        now = time.time()
-        for item in items:
-            asset, price = self._extract_asset_and_price(item)
-            if not asset:
-                continue
-            if self.watch_asset and asset.upper() != self.watch_asset:
-                continue
-            last = self._last_print.get(asset, 0)
-            if now - last < self.min_interval:
-                continue
-            self._last_print[asset] = now
-            self._print_quote(asset, price)
-
-    def _on_history_last(self, *args) -> None:
-        """يُستدعى عند وصول s_history/last. يحتوي على أحدث ticks للأصل الحالي.
-
-        بنية payload المحتملة:
-          - {"asset":"XTIUSD_otc", "history":[[ts, price, dir], ...]}
-          - {"asset":"XTIUSD_otc", "candles":[[time, o, c, h, l, v], ...]}
-          - [[ts, price, dir], ...]  (قائمة ticks مباشرة)
-        آخر tick/شمعة يحتوي على السعر اللحظي.
-        """
-        if not self._enabled and not self.debug:
-            return
-        if not args:
-            return
-        payload = args[0]
-        if self.debug:
-            ts = datetime.now().strftime("%H:%M:%S")
-            preview = str(payload)[:200]
-            print(f"  {Colors.DIM}[{ts}] DEBUG s_history/last: {preview}{Colors.RESET}")
-        if not self._enabled:
-            return
-
-        # استخرج اسم الأصل والسعر
-        asset_name = None
-        if isinstance(payload, dict):
-            asset_name = payload.get("asset") or payload.get("symbol")
-        # fallback: استخدم الأصل الحالي من API
-        if not asset_name and self.api:
-            asset_name = self.api.current_asset
-        if not asset_name and self.watch_asset:
-            asset_name = self.watch_asset
-        if not asset_name:
-            return
-
-        if self.watch_asset and asset_name.upper() != self.watch_asset:
-            return
-
-        price = self._extract_latest_price(payload)
-        if price is None:
-            return
-
-        now = time.time()
-        last = self._last_print.get(asset_name, 0)
-        if now - last < self.min_interval:
-            # حتى مع throttling، حدّث المخزن المؤقت
-            if self.api:
-                self.api.assets_quotes[asset_name] = {"price": price}
-            return
-        self._last_print[asset_name] = now
-        # حدّث المخزن المؤقت
-        if self.api:
-            self.api.assets_quotes[asset_name] = {"price": price}
-        self._print_quote(asset_name, price)
-
-    def _extract_asset_and_price(self, item: Any) -> Tuple[Optional[str], Optional[float]]:
-        """يستخرج اسم الأصل والسعر من عنصر quote بأي صيغة محتملة.
-
-        الصيغ المدعومة:
-          - {"asset":"EURUSD_otc", "price":1.0823, ...}
-          - {"asset":"EURUSD_otc", "bid":1.0823, "ask":1.0825, ...}
-          - ("EURUSD_otc", 1.0823)  (tuple)
-          - ["EURUSD_otc", 1.0823]  (list)
-          - 1.0823  (قيمة بسيطة — يستخدم اسم الأصل الحالي)
-
-        مهم: يرفض القيم التي تبدو timestamps (Unix time) بدلاً من أسعار.
-        """
-        if isinstance(item, dict):
-            asset = item.get("asset") or item.get("name") or item.get("symbol")
-            price = None
-            for k in ("price", "bid", "ask", "close", "rate", "last", "value"):
-                if k in item:
-                    try:
-                        candidate = float(item[k])
-                        if not _is_likely_timestamp(candidate):
-                            price = candidate
-                            break
-                    except (ValueError, TypeError):
-                        continue
-            return asset, price
-        if isinstance(item, (list, tuple)) and len(item) >= 2:
-            asset = item[0] if isinstance(item[0], str) else None
-            # جرّب كل المواضع لإيجاد قيمة تبدو سعراً (وليست timestamp)
-            price = None
-            for idx in range(1, len(item)):
-                try:
-                    candidate = float(item[idx])
-                    if not _is_likely_timestamp(candidate):
-                        price = candidate
-                        break
-                except (ValueError, TypeError):
-                    continue
-            return asset, price
-        # قيمة بسيطة — استخدم الأصل الحالي
-        if isinstance(item, (int, float)):
-            asset = self.watch_asset or (self.api.current_asset if self.api else None)
-            try:
-                val = float(item)
-                if _is_likely_timestamp(val):
-                    return asset, None
-                return asset, val
-            except (ValueError, TypeError):
-                return asset, None
-        return None, None
-
-    def _extract_latest_price(self, payload: Any) -> Optional[float]:
-        """يستخرج آخر سعر من payload الـ history/last.
-
-        يحاول عدة صيغ:
-          - {"history":[[ts, price, dir], ...]}  ← tick format
-          - {"candles":[[time, o, c, h, l, v], ...]}  ← candle list format
-          - {"candles":[{"time","open","close",...}, ...]}  ← candle dict format
-          - [[ts, price, dir], ...]  (قائمة ticks مباشرة)
-
-        مهم: يرفض القيم التي تبدو timestamps (Unix time).
-        """
-        ticks_or_candles = None
-        if isinstance(payload, dict):
-            ticks_or_candles = (payload.get("history") or payload.get("candles")
-                                or payload.get("data") or payload.get("list")
-                                or payload.get("ticks"))
-            if ticks_or_candles is None and isinstance(payload.get("data"), dict):
-                ticks_or_candles = (payload["data"].get("candles")
-                                     or payload["data"].get("history") or [])
-        elif isinstance(payload, list):
-            ticks_or_candles = payload
-        if not ticks_or_candles or not isinstance(ticks_or_candles, list):
-            return None
-        if not ticks_or_candles:
-            return None
-        # ابحث في آخر tick/شمعة، وإن كان سعره يبدو timestamp، جرّب السابق
-        for idx in range(len(ticks_or_candles) - 1, -1, -1):
-            last = ticks_or_candles[idx]
-            price = self._extract_price_from_tick_or_candle(last)
-            if price is not None and not _is_likely_timestamp(price):
-                return price
-        return None
-
-    def _extract_price_from_tick_or_candle(self, item: Any) -> Optional[float]:
-        """يستخرج السعر من tick أو candle واحد.
-        - tick: [ts, price, dir]  → يجرّب index 1 ثم 2
-        - candle list: [time, o, c, h, l, v]  → يجرّب index 2 (close) ثم 1 (open)
-        - candle dict: {"price":...} أو {"close":...}
-        يرفض القيم التي تبدو timestamps.
-        """
-        if isinstance(item, (list, tuple)):
-            for idx in (1, 2, 3):
-                if idx < len(item):
-                    try:
-                        candidate = float(item[idx])
-                        if not _is_likely_timestamp(candidate):
-                            return candidate
-                    except (ValueError, TypeError):
-                        continue
-        elif isinstance(item, dict):
-            for k in ("price", "close", "bid", "ask", "rate", "last", "value"):
-                if k in item:
-                    try:
-                        candidate = float(item[k])
-                        if not _is_likely_timestamp(candidate):
-                            return candidate
-                    except (ValueError, TypeError):
-                        continue
-        return None
-
-    def _on_sentiment(self, *args) -> None:
-        """يُستدعى عند وصول s_asset/sentiment. يطبع نسبة الدفع فوراً."""
-        if not self._enabled and not self.debug:
-            return
-        if not args:
-            return
-        payload = args[0]
-        if self.debug:
-            ts = datetime.now().strftime("%H:%M:%S")
-            preview = str(payload)[:200]
-            print(f"  {Colors.DIM}[{ts}] DEBUG s_asset/sentiment: {preview}{Colors.RESET}")
-        if not self._enabled:
-            return
-        items = payload if isinstance(payload, list) else [payload]
-        for item in items:
-            if not isinstance(item, dict) or "asset" not in item:
-                continue
-            asset = item["asset"]
-            if self.watch_asset and asset.upper() != self.watch_asset:
-                continue
-            payout = item.get("sentiment",
-                              item.get("payout",
-                                       item.get("profit")))
-            ts = datetime.now().strftime("%H:%M:%S")
-            payout_str = f"{payout}%" if payout is not None else "—"
-            print(f"  {Colors.YELLOW}[{ts}] PAYOUT {Colors.RESET}"
-                  f"{asset:<20} {payout_str}")
-
-    def _print_quote(self, asset: str, price_or_item: Any) -> None:
-        """يطبع/يحدّث سطر السعر اللحظي على نفس السطر (inline update).
-
-        يستخدم carriage return (\\r) للكتابة فوق نفس السطر بدلاً من طباعة سطر جديد.
-        يقبل إما:
-          - قيمة سعر مباشرة (float/int)
-          - أو dict يحتوي على مفتاح سعر
-        """
-        price = None
-        if isinstance(price_or_item, (int, float)):
-            candidate = float(price_or_item)
-            if not _is_likely_timestamp(candidate):
-                price = candidate
-        elif isinstance(price_or_item, dict):
-            for k in ("price", "bid", "ask", "close", "rate", "last", "value"):
-                if k in price_or_item:
-                    try:
-                        candidate = float(price_or_item[k])
-                        if not _is_likely_timestamp(candidate):
-                            price = candidate
-                            break
-                    except (ValueError, TypeError):
-                        continue
-        sent = self.api.assets_sentiment.get(asset, {}) if self.api else {}
-        payout = sent.get("sentiment") if isinstance(sent, dict) else None
-        ts = datetime.now().strftime("%H:%M:%S")
-        payout_str = f"{payout}%" if payout is not None else "—"
-        price_str = f"{price}" if price is not None else "waiting..."
-        # جلب حالة الأصل (مفتوح/مغلق) من قائمة الأصول المُخزّنة
-        status_str = ""
-        if self.api and self.api.assets_list:
-            records = _extract_asset_records(self.api.assets_list)
-            rec = next((r for r in records if r.get("asset") == asset), None)
-            if rec:
-                status_text, status_color = _format_asset_status(rec)
-                status_str = f"{status_color}{status_text:<7}{Colors.RESET} "
-        self._print_count += 1
-        # فعّل flag لكي logmsg لا تكتب فوق السعر
-        set_live_stream_active(True)
-        # استخدم \r للكتابة فوق نفس السطر (inline update)
-        # \033[K يمسح باقي السطر لتفادي اختلاط النصوص
-        line = (f"\r\033[K  {Colors.DIM}[{ts}]#{self._print_count}{Colors.RESET} "
-                f"{Colors.GREEN}{asset:<20}{Colors.RESET} "
-                f"{status_str}"
-                f"payout={payout_str:<6} "
-                f"price={Colors.CYAN}{price_str}{Colors.RESET}")
-        sys.stdout.write(line)
-        sys.stdout.flush()
-
-
-# ==============================================================================
-# SECTION 14.6: INTERACTIVE COMMAND PROCESSOR
-# ==============================================================================
-async def cmd_assets(client: "Binolla", live_stream: LivePriceStream) -> None:
-    """يجلب قائمة كل الأصول ويطبعها مع نسبة الدفع والسعر اللحظي بجوارها.
-
-    بنية payload من Binolla (كما التُقطت):
-        [[[442, '0700.HK_otc', '0700.HK (OTC)', 'stock', 3, 93, ...], ...]]
-    حيث:
-      [1] = asset code (مثل '0700.HK_otc')
-      [2] = display name (مثل '0700.HK (OTC)')
-      [3] = type (مثل 'stock', 'currency', 'crypto')
-      [5] = payout % (مدمج في tuple مباشرة!)
-      [18]/[19] = bid/ask
-    """
-    if not client.api:
-        print(f"{Colors.RED}API not connected.{Colors.RESET}")
-        return
-    print(f"\n{Colors.CYAN}Fetching assets/list...{Colors.RESET}")
-    await client.api.event_registry.clear_event("s_assets/list")
-    client.api.fetch_assets()
-    payload = await client.api.event_registry.wait_event(
-        "s_assets/list", timeout=10.0)
-    if not payload:
-        payload = client.api.assets_list
-    if not payload:
-        print(f"{Colors.RED}No assets received.{Colors.RESET}")
-        return
-    client.api.assets_list = payload
-
-    # استخدم السجلات الكاملة (تدعم tuple format و dict format)
-    records = _extract_asset_records(payload)
-    if not records:
-        # fallback للأسماء فقط
-        asset_names = _extract_asset_names(payload)
-        if not asset_names:
-            print(f"{Colors.RED}Could not extract asset names from payload.{Colors.RESET}")
-            print(f"{Colors.DIM}Payload preview: {str(payload)[:300]}{Colors.RESET}")
-            return
-        # ابنِ سجلات بسيطة من الأسماء
-        records = [{"asset": name, "name": name, "type": "", "payout": None}
-                   for name in asset_names]
-
-    print(f"\n{Colors.GREEN}Total assets: {len(records)}{Colors.RESET}")
-
-    # تجميع حسب النوع للعرض
-    by_type: Dict[str, List[Dict[str, Any]]] = {}
-    for rec in records:
-        t = rec.get("type") or "other"
-        by_type.setdefault(t, []).append(rec)
-
-    print(f"\n{Colors.BOLD}By type:{Colors.RESET} " +
-          "  ".join(f"{t}={len(recs)}" for t, recs in sorted(by_type.items())))
-
-    # إحصاءات الحالة (مفتوح/مغلق)
-    open_count = sum(1 for r in records if _format_asset_status(r)[0] == "OPEN")
-    closed_count = sum(1 for r in records if _format_asset_status(r)[0] == "CLOSED")
-    print(f"{Colors.BOLD}By status:{Colors.RESET} " +
-          f"{Colors.GREEN}OPEN={open_count}{Colors.RESET}  " +
-          f"{Colors.RED}CLOSED={closed_count}{Colors.RESET}")
-
-    print(f"\n{Colors.BOLD}{'#':<4} {'Asset':<22} {'Name':<24} {'Type':<10} "
-          f"{'Status':<8} {'Payout%':<10} {'Price':<15}{Colors.RESET}")
-    print(f"    {'-'*22} {'-'*24} {'-'*10} {'-'*8} {'-'*10} {'-'*15}")
-    for i, rec in enumerate(records, 1):
-        name = rec.get("asset", "")
-        display = rec.get("name", name)[:22]
-        atype = rec.get("type", "")[:10]
-        # حالة الأصل (مفتوح/مغلق)
-        status_text, status_color = _format_asset_status(rec)
-        status_str = f"{status_color}{status_text:<8}{Colors.RESET}"
-        # payout من السجل نفسه (من tuple) أو من sentiment المُلتقَط
-        payout = rec.get("payout")
-        if payout is None:
-            sent = client.api.assets_sentiment.get(name, {})
-            payout = sent.get("sentiment") if isinstance(sent, dict) else None
-        # السعر اللحظي
-        quote = client.api.assets_quotes.get(name)
-        price = None
-        if isinstance(quote, dict):
-            for k in ("price", "value", "rate", "last", "bid", "ask"):
-                if k in quote:
-                    price = quote[k]; break
-        elif isinstance(quote, (int, float)):
-            price = float(quote)
-        # fallback لـ bid/ask من السجل نفسه
-        if price is None:
-            if rec.get("bid") is not None:
-                price = rec["bid"]
-            elif rec.get("ask") is not None:
-                price = rec["ask"]
-        payout_str = f"{payout}%" if payout is not None else "—"
-        price_str = f"{price}" if price is not None else "—"
-        print(f"  {i:<4} {name:<22} {display:<24} {atype:<10} {status_str} {payout_str:<10} {price_str:<15}")
-
-    # اعرض الإحصاءات النهائية
-    with_payout = sum(1 for r in records if r.get("payout") is not None)
-    with_price = sum(1 for r in records if (r.get("bid") is not None
-                                            or r.get("ask") is not None
-                                            or r["asset"] in client.api.assets_quotes))
-    print(f"\n{Colors.CYAN}Summary:{Colors.RESET} "
-          f"total={len(records)}  "
-          f"{Colors.GREEN}open={open_count}{Colors.RESET}  "
-          f"{Colors.RED}closed={closed_count}{Colors.RESET}  "
-          f"with_payout={with_payout}  "
-          f"with_price={with_price}")
-    print(f"{Colors.DIM}Tip: type 'watch <asset>' to focus live stream on one asset.{Colors.RESET}")
-    print(f"{Colors.DIM}     type 'candles EURUSD_otc 7 1' to fetch historical candles.{Colors.RESET}")
-
-
-async def cmd_payout(client: "Binolla", live_stream: LivePriceStream,
-                      asset_arg: Optional[str] = None) -> None:
-    """يطبع نسبة الدفع الحالية لكل الأصول (أو لأصل محدد إن طُلب)."""
-    if not client.api:
-        return
-    if asset_arg:
-        # اشترك في sentiment لأصل محدد وانتظر التحديث
-        asset = asset_arg.strip()
-        print(f"{Colors.CYAN}Subscribing to sentiment for {asset}...{Colors.RESET}")
-        client.api.subscribe_asset_sentiment(asset)
-        await asyncio.sleep(1.5)
-        sent = client.api.assets_sentiment.get(asset, {})
-        payout = sent.get("sentiment") if isinstance(sent, dict) else None
-        if payout is not None:
-            print(f"  {asset:<22} payout={payout}%")
-        else:
-            print(f"  {asset}: no sentiment yet. Try again in a few seconds.")
-        return
-    # اطبع كل ما هو محفوظ
-    sentiments = client.api.assets_sentiment
-    if not sentiments:
-        print(f"{Colors.YELLOW}No payout data yet. Type 'assets' first to subscribe.{Colors.RESET}")
-        return
-    print(f"\n{Colors.BOLD}Payout % (sentiment) — {len(sentiments)} assets:{Colors.RESET}")
-    print(f"  {'Asset':<22} {'Payout%':<10}")
-    print(f"  {'-'*22} {'-'*10}")
-    for name in sorted(sentiments.keys()):
-        sent = sentiments[name]
-        payout = sent.get("sentiment") if isinstance(sent, dict) else None
-        payout_str = f"{payout}%" if payout is not None else "—"
-        print(f"  {name:<22} {payout_str:<10}")
-
-
-async def cmd_prices(client: "Binolla") -> None:
-    """يطبع آخر سعر لحظي محفوظ لكل الأصول."""
-    if not client.api:
-        return
-    quotes = client.api.assets_quotes
-    if not quotes:
-        print(f"{Colors.YELLOW}No quotes yet. Waiting for stream...{Colors.RESET}")
-        return
-    print(f"\n{Colors.BOLD}Live prices — {len(quotes)} assets:{Colors.RESET}")
-    print(f"  {'Asset':<22} {'Price':<20}")
-    print(f"  {'-'*22} {'-'*20}")
-    for name in sorted(quotes.keys()):
-        quote = quotes[name]
-        price = None
-        if isinstance(quote, dict):
-            for k in ("price", "value", "rate", "last"):
-                if k in quote:
-                    price = quote[k]; break
-        elif isinstance(quote, (int, float)):
-            price = float(quote)
-        price_str = f"{price}" if price is not None else "—"
-        print(f"  {name:<22} {price_str:<20}")
-
-
-async def cmd_candles(client: "Binolla", asset: str, days: int,
-                       timeframe: int) -> None:
-    """يجلب الشموع التاريخية ويحفظها في JSON."""
-    normalized = normalize_asset(asset)
-    if not normalized:
-        print(f"{Colors.RED}Invalid asset name: {asset}{Colors.RESET}")
-        return
-    if days <= 0:
-        print(f"{Colors.RED}Days must be positive.{Colors.RESET}")
-        return
-    if timeframe <= 0:
-        print(f"{Colors.RED}Timeframe must be positive.{Colors.RESET}")
-        return
-    print(f"\n{Colors.CYAN}Fetching candles for {normalized} "
-          f"({days}d, M{timeframe})...{Colors.RESET}")
-    candles = await fetch_candles_for_asset(
-        client, normalized, days, timeframe, idx=1, total=1)
-    if candles:
-        filepath = save_candles_to_json(candles, normalized, timeframe, days)
-        print(f"{Colors.GREEN}Saved {len(candles)} candles to: {filepath.absolute()}{Colors.RESET}")
-    else:
-        print(f"{Colors.RED}No candles fetched for {normalized}.{Colors.RESET}")
-
-
-async def cmd_watch(live_stream: LivePriceStream,
-                     asset_arg: Optional[str] = None) -> None:
-    """يضبط بث الأسعار على أصل محدد أو على كل الأصول."""
-    if asset_arg:
-        asset = asset_arg.strip()
-        live_stream.set_watch(asset)
-        print(f"{Colors.CYAN}Live stream now watching: {asset}{Colors.RESET}")
-    else:
-        live_stream.set_watch(None)
-        print(f"{Colors.CYAN}Live stream now watching: ALL assets{Colors.RESET}")
-
-
-async def cmd_prices_live(client: "Binolla", live_stream: LivePriceStream,
-                            asset_arg: Optional[str] = None) -> None:
-    """يبدأ بث سعر لحظي مستمر لأصل محدد (بعد تأكيد 'ok' من المستخدم).
-
-    الآلية:
-    1) يعرض ملخصاً ويطلب تأكيد 'ok' قبل البدء.
-    2) يرسل asset/list/change للأصل المطلوب لتفعيل تدفق s_quotes/list الخاص به.
-    3) يشترك في sentiment (نسبة الدفع) للأصل.
-    4) يضبط LivePriceStream على متابعة هذا الأصل حصرياً.
-    5) يستأنف البث إن كان متوقفاً.
-    6) السعر يُحدّث على نفس السطر (inline update).
-
-    لإيقاف البث: اكتب 'stop' أو 'watch all' أو 'pause'.
-    """
-    if not client.api:
-        print(f"{Colors.RED}API not connected.{Colors.RESET}")
-        return
-    if not asset_arg:
-        print(f"{Colors.YELLOW}Usage: prices live <asset>{Colors.RESET}")
-        print(f"{Colors.DIM}Example: prices live XTIUSD_otc{Colors.RESET}")
-        print(f"{Colors.DIM}         prices live EURUSD_otc{Colors.RESET}")
-        return
-    asset = asset_arg.strip()
-
-    # اطبع معلومات الأصل من قائمة الأصول المحفوظة
-    records = _extract_asset_records(client.api.assets_list) if client.api.assets_list else []
-    asset_info = next((r for r in records if r.get("asset") == asset), None)
-    print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
-    print(f"{Colors.BOLD}  Live price stream request{Colors.RESET}")
-    print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
-    if asset_info:
-        print(f"  Asset:       {asset}")
-        print(f"  Name:        {asset_info.get('name', '—')}")
-        print(f"  Type:        {asset_info.get('type', '—')}")
-        # حالة الأصل (مفتوح/مغلق)
-        status_text, status_color = _format_asset_status(asset_info)
-        print(f"  Status:      {status_color}{status_text}{Colors.RESET}")
-        payout_cached = asset_info.get("payout")
-        if payout_cached is not None:
-            print(f"  Payout:      {payout_cached}%")
-        bid = asset_info.get("bid")
-        ask = asset_info.get("ask")
-        if bid is not None:
-            print(f"  Last bid:    {bid}")
-        if ask is not None:
-            print(f"  Last ask:    {ask}")
-        # تحذير إن كان مغلقاً
-        if status_text == "CLOSED":
-            print(f"\n  {Colors.RED}WARNING: This asset is currently CLOSED for trading.{Colors.RESET}")
-            print(f"  {Colors.DIM}Live prices may still stream, but you cannot place trades.{Colors.RESET}")
-    else:
-        print(f"  Asset: {asset} (not found in assets list — will try anyway)")
-
-    # اطلب تأكيد 'ok'
-    print(f"\n{Colors.YELLOW}Type 'ok' to start live stream, or anything else to cancel.{Colors.RESET}")
-    try:
-        confirm = (await ainput(f"Confirm [ok]: ")).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        confirm = ""
-    if confirm != "ok":
-        print(f"{Colors.YELLOW}Cancelled.{Colors.RESET}")
-        return
-
-    print(f"\n{Colors.CYAN}Starting LIVE price stream for: {asset}{Colors.RESET}")
-    print(f"{Colors.DIM}Price updates on this line (inline). Type 'stop' to end.{Colors.RESET}")
-
-    # 1) فعّل تدفق quotes للأصل عبر asset/list/change
-    try:
-        client.api.change_asset(asset, period=60)
-        bn_logmsg(f"Sent asset/list/change for {asset} (period=60)")
-    except Exception as e:
-        bn_logmsg(f"{Colors.YELLOW}change_asset warning: {e}{Colors.RESET}")
-
-    # 2) اشترك في sentiment للأصل
-    try:
-        client.api.subscribe_asset_sentiment(asset)
-        bn_logmsg(f"Subscribed to sentiment for {asset}")
-    except Exception as e:
-        logger.debug("subscribe_asset_sentiment err: %s", e)
-
-    # 3) اطلب quotes فوراً
-    try:
-        client.api.subscribe_quotes()
-    except Exception as e:
-        logger.debug("subscribe_quotes err: %s", e)
-
-    # 4) اضبط البث على هذا الأصل حصرياً + استأنف
-    live_stream.set_watch(asset)
-    live_stream.resume()
-    # اطبع سطر فارغ ليكون هو السطر الذي يُحدّث
-    sys.stdout.write("\r\033[K  Waiting for first live quote...\r")
-    sys.stdout.flush()
-
-
-def print_help() -> None:
-    """يطبع قائمة الأوامر المتاحة."""
-    print(f"\n{Colors.BOLD}Available commands:{Colors.RESET}")
-    print(f"  {Colors.CYAN}assets{Colors.RESET}                          Fetch + print all assets with payout% and price")
-    print(f"  {Colors.CYAN}payout [asset]{Colors.RESET}                  Print payout% for all (or one) asset")
-    print(f"  {Colors.CYAN}prices{Colors.RESET}                           Print current cached live prices (all assets)")
-    print(f"  {Colors.CYAN}prices live <asset>{Colors.RESET}             Start continuous live price stream for one asset")
-    print(f"  {Colors.DIM}    example: prices live XTIUSD_otc{Colors.RESET}")
-    print(f"  {Colors.DIM}             prices live EURUSD_otc{Colors.RESET}")
-    print(f"  {Colors.CYAN}stop{Colors.RESET}                            Stop live stream + return to all-assets mode")
-    print(f"  {Colors.CYAN}candles <asset> <d> <tf>{Colors.RESET}       Fetch candles (e.g. 'candles EURUSD_otc 7 1')")
-    print(f"  {Colors.CYAN}watch <asset>{Colors.RESET}                   Focus live stream on one asset (alias for 'prices live')")
-    print(f"  {Colors.CYAN}watch all{Colors.RESET}                       Stream all assets (default)")
-    print(f"  {Colors.CYAN}pause{Colors.RESET}                           Pause live price stream")
-    print(f"  {Colors.CYAN}resume{Colors.RESET}                          Resume live price stream")
-    print(f"  {Colors.CYAN}debug{Colors.RESET}                           Toggle debug mode (print raw WS events)")
-    print(f"  {Colors.CYAN}snapshot{Colors.RESET}                         Save JSON snapshot of all assets+payout+price")
-    print(f"  {Colors.CYAN}help{Colors.RESET}                            Show this help")
-    print(f"  {Colors.CYAN}quit{Colors.RESET}                            Exit")
-    print()
-
-
-async def process_command(cmd_line: str, client: "Binolla",
-                            args: Dict[str, Any],
-                            live_stream: LivePriceStream) -> bool:
-    """يُعالج سطر أمر واحد. يُعيد True لمتابعة الحلقة، False للخروج."""
-    parts = cmd_line.strip().split()
-    if not parts:
-        return True
-    cmd = parts[0].lower()
-    rest = parts[1:]
-
-    if cmd in ("quit", "exit", "q"):
-        return False
-    elif cmd == "help" or cmd == "?":
-        print_help()
-    elif cmd in ("assets", "list", "ls"):
-        await cmd_assets(client, live_stream)
-    elif cmd == "payout":
-        await cmd_payout(client, live_stream, rest[0] if rest else None)
-    elif cmd == "prices":
-        #prices                 → طباعة كل الأسعار المخزنة
-        #prices live <asset>    → بدء بث لحظي مستمر لأصل واحد
-        if rest and rest[0].lower() == "live":
-            asset_arg = rest[1] if len(rest) > 1 else None
-            await cmd_prices_live(client, live_stream, asset_arg)
-        else:
-            await cmd_prices(client)
-    elif cmd == "stop":
-        # أوقف بث الأصل الفردي + عُ إلى وضع كل الأصول
-        live_stream.set_watch(None)
-        live_stream.stop()
-        print(f"{Colors.YELLOW}Live stream stopped. Type 'resume' or 'prices live <asset>' to restart.{Colors.RESET}")
-    elif cmd == "candles":
-        if len(rest) < 3:
-            print(f"{Colors.YELLOW}Usage: candles <asset> <days> <timeframe>{Colors.RESET}")
-            print(f"{Colors.DIM}Example: candles EURUSD_otc 7 1{Colors.RESET}")
-        else:
-            try:
-                asset = rest[0]
-                days = int(rest[1])
-                tf = int(rest[2])
-                await cmd_candles(client, asset, days, tf)
-            except ValueError:
-                print(f"{Colors.RED}days and timeframe must be integers.{Colors.RESET}")
-    elif cmd == "watch":
-        # watch <asset>  →  alias لـ prices live <asset>
-        # watch all      →  بث كل الأصول
-        if rest and rest[0].lower() == "all":
-            live_stream.set_watch(None)
-            live_stream.resume()
-            print(f"{Colors.CYAN}Live stream now watching: ALL assets{Colors.RESET}")
-        elif rest:
-            await cmd_prices_live(client, live_stream, rest[0])
-        else:
-            print(f"{Colors.YELLOW}Usage: watch <asset>  or  watch all{Colors.RESET}")
-    elif cmd == "pause":
-        live_stream.stop()
-        print(f"{Colors.YELLOW}Live price stream paused.{Colors.RESET}")
-    elif cmd == "resume":
-        live_stream.resume()
-        print(f"{Colors.GREEN}Live price stream resumed.{Colors.RESET}")
-    elif cmd == "debug":
-        if rest and rest[0].lower() in ("off", "0", "false", "no"):
-            live_stream.set_debug(False)
-            print(f"{Colors.YELLOW}Debug mode OFF.{Colors.RESET}")
-        else:
-            live_stream.set_debug(True)
-            print(f"{Colors.GREEN}Debug mode ON — will print raw s_quotes/list, "
-                  f"s_history/last, s_asset/sentiment events as they arrive.{Colors.RESET}")
-            print(f"{Colors.DIM}Type 'debug off' to disable.{Colors.RESET}")
-    elif cmd == "snapshot":
-        if client.api and (client.api.assets_sentiment or client.api.assets_quotes):
-            snapshot = await fetch_all_assets_info(client, wait_seconds=0.5)
-            if "error" not in snapshot:
-                out = save_assets_info_to_json(snapshot)
-                print(f"{Colors.GREEN}Snapshot saved to: {out.absolute()}{Colors.RESET}")
-            else:
-                print(f"{Colors.RED}Snapshot error: {snapshot['error']}{Colors.RESET}")
-        else:
-            print(f"{Colors.YELLOW}No data to snapshot yet.{Colors.RESET}")
-    else:
-        print(f"{Colors.RED}Unknown command: {cmd}{Colors.RESET}")
-        print(f"{Colors.DIM}Type 'help' for available commands.{Colors.RESET}")
-    return True
-
-
-# ==============================================================================
-# SECTION 15: MAIN LOOP (continuous stream + interactive commands)
-# ==============================================================================
-
-# ==============================================================================
-# DUAL SERVER — Unified HTTP API + CLI (separate per broker, NOT merged)
+# DUAL SERVER — Unified HTTP API + CLI (SEPARATE per broker)
 # ==============================================================================
 import os
 import sys
@@ -9135,7 +8209,7 @@ def init_db():
 
 
 # ==============================================================================
-# QUOTEX PAYOUTS CAPTURE (monkey-patch + binary frame handler)
+# QUOTEX PAYOUTS CAPTURE
 # ==============================================================================
 _QX_PAYOUTS: Dict[str, Dict] = {}
 _QX_PAYOUTS_LOCK = threading.RLock()
@@ -9267,13 +8341,9 @@ class QuotexManager:
     async def connect(self):
         _qx_install_hook()
         logger.info(f"[Quotex] Connecting as {self.email}...")
-        loop = globals().get("ASYNC_LOOP")
-        if not loop or not loop.is_running():
-            # Start the async engine if not running
-            global ASYNC_LOOP
-            if ASYNC_LOOP is None or not ASYNC_LOOP.is_running():
-                logger.error("[Quotex] ASYNC_LOOP not running")
-                return False
+        if not ASYNC_LOOP or not ASYNC_LOOP.is_running():
+            logger.error("[Quotex] ASYNC_LOOP not running")
+            return False
         future = asyncio.run_coroutine_threadsafe(
             connect_quotex(self.email, self.password, force_fresh=True, max_attempts=3),
             ASYNC_LOOP)
@@ -9434,7 +8504,7 @@ class BinollaManager:
 
 
 # ==============================================================================
-# HTTP API SERVER (SEPARATE per broker — NOT merged)
+# HTTP API SERVER (SEPARATE per broker)
 # ==============================================================================
 class DualHandler(BaseHTTPRequestHandler):
     qx_mgr = None
@@ -9471,7 +8541,7 @@ class DualHandler(BaseHTTPRequestHandler):
                      "binolla": self.bn_mgr.status() if self.bn_mgr else {}})
             return
 
-        # QUOTEX (separate endpoints)
+        # QUOTEX (separate)
         if path == "/api/quotex/payouts":
             self._j({"platform": "quotex", "count": len(self.qx_mgr.get_payouts()),
                      "payouts": self.qx_mgr.get_payouts()})
@@ -9479,7 +8549,8 @@ class DualHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/quotex/payouts/"):
             a = path.replace("/api/quotex/payouts/", "")
             info = self.qx_mgr.get_payout(a)
-            self._j({"platform": "quotex", "asset": a, **(info or {})}) if info else self._e(f"Not found: {a}", 404)
+            if info: self._j({"platform": "quotex", "asset": a, **info})
+            else: self._e(f"Not found: {a}", 404)
             return
         if path == "/api/quotex/streaming":
             self._j({"platform": "quotex", "assets": self.qx_mgr.get_streaming_assets()})
@@ -9491,7 +8562,7 @@ class DualHandler(BaseHTTPRequestHandler):
             self._j({"platform": "quotex", "asset": a, "status": "OK" if live else "WAIT", **(live or {})})
             return
 
-        # BINOLLA (separate endpoints)
+        # BINOLLA (separate)
         if path == "/api/binolla/payouts":
             self._j({"platform": "binolla", "count": len(self.bn_mgr.get_payouts()),
                      "payouts": self.bn_mgr.get_payouts()})
@@ -9499,7 +8570,8 @@ class DualHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/binolla/payouts/"):
             a = path.replace("/api/binolla/payouts/", "")
             info = self.bn_mgr.get_payout(a)
-            self._j({"platform": "binolla", "asset": a, **(info or {})}) if info else self._e(f"Not found: {a}", 404)
+            if info: self._j({"platform": "binolla", "asset": a, **info})
+            else: self._e(f"Not found: {a}", 404)
             return
         if path == "/api/binolla/streaming":
             self._j({"platform": "binolla", "assets": self.bn_mgr.get_streaming_assets()})
